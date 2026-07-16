@@ -7,7 +7,7 @@
 #   bash install_board-sales-invoicing.sh
 #   bash install_board-sales-invoicing.sh --non-interactive
 #
-#   REPO_URL=https://github.com/<org>/Board-Sales-Invoicing.git \
+#   REPO_URL=https://github.com/andrewmusto-git/Board-Sales-Invoicing.git \
 #   DB_URL=jdbc:as400://host/PDMSTRDBLB VEZA_URL=https://host \
 #   VEZA_API_KEY=tok DB_USER=u DB_PASSWORD=p JDBC_JAR=/opt/jt400/jt400.jar \
 #       bash install_board-sales-invoicing.sh --non-interactive
@@ -28,7 +28,7 @@ INSTALL_DIR="/opt/VEZA/board-sales-invoicing-veza"
 SCRIPTS_DIR="${INSTALL_DIR}/scripts"
 LOGS_DIR="${INSTALL_DIR}/logs"
 JT400_DIR="/opt/jt400"
-REPO_URL="${REPO_URL:-}"
+REPO_URL="${REPO_URL:-https://github.com/andrewmusto-git/Board-Sales-Invoicing.git}"
 BRANCH="${BRANCH:-main}"
 INTEGRATION_SUBDIR="integrations/board-sales-invoicing"
 NON_INTERACTIVE=false
