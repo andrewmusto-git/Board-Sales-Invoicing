@@ -1,6 +1,6 @@
 # Board Sales Invoicing IBM i → Veza OAA Connector
 
-Connects to the IBM i system configured via `DB_HOST` via pyodbc (IBM i Access Client Solutions ODBC driver) and pushes user, role, and menu-permission data into Veza's Access Graph using the OAA CustomApplication template.
+Connects to the IBM i system configured via `DB_URL` via JDBC (IBM Toolbox for Java / JT400 driver) and pushes user, role, and menu-permission data into Veza's Access Graph using the OAA CustomApplication template.
 
 ---
 
@@ -59,7 +59,7 @@ graph LR
 ## 3. How It Works
 
 1. Reads credentials from `.env` (or CLI args / environment variables).
-2. Opens a pyodbc connection to the configured IBM i host (`DB_HOST`) using the IBM i Access ODBC driver.
+2. Opens a JDBC connection to the configured IBM i host (`DB_URL`) using the IBM Toolbox for Java driver (`com.ibm.as400.access.AS400JDBCDriver`).
 3. Runs the **Account Query** — returns all active employees with their role assignments and the menu/submenu entries they can access.
 4. Runs the **Group Query** — returns the distinct set of menu/submenu resource names.
 5. Runs the **Role Query** — returns the distinct set of `EM_ROLE` / System_ID codes.
@@ -78,8 +78,8 @@ graph LR
 | Requirement | Notes |
 |---|---|
 | Python 3.9+ | `python3 --version` |
-| unixODBC | `sudo dnf install unixODBC unixODBC-devel` |
-| IBM i Access Client Solutions ODBC driver | Download from [IBM Support](https://www.ibm.com/support/pages/ibm-i-access-client-solutions); install and register in `/etc/odbc.ini` |
+| Java JRE 8+ | Required by jaydebeapi/JPype1; `java -version` |
+| JT400 JAR (`jt400.jar`) | Download from [Maven Central](https://repo1.maven.org/maven2/net/sf/jt400/jt400/) or [SourceForge](https://sourceforge.net/projects/jt400/files/); place at the path set in `JDBC_JAR` |
 | Network access to your IBM i host | TCP ports 449 and 8471 must be reachable |
 | IBM i user profile | Must have `*USE` authority to `pdmstrdblb` library |
 | Veza tenant + API key | Generated in Veza Settings → API Keys |
@@ -108,11 +108,12 @@ The installer will:
 
 ```bash
 # Install prerequisites
-sudo dnf install -y git python3 python3-pip unixODBC unixODBC-devel
+sudo dnf install -y git python3 python3-pip java-11-openjdk-headless
 
-# Install IBM i Access Client Solutions ODBC driver
-# (download RPM from https://www.ibm.com/support/pages/ibm-i-access-client-solutions)
-sudo rpm -ivh ibm-iaccess-*.rpm
+# Download JT400 JAR
+sudo mkdir -p /opt/jt400
+sudo curl -fsSL -o /opt/jt400/jt400.jar \
+    https://repo1.maven.org/maven2/net/sf/jt400/jt400/20.0.7/jt400-20.0.7.jar
 
 # Clone and set up
 git clone https://github.com/<your-github-org>/Board-Sales-Invoicing.git
@@ -123,18 +124,19 @@ venv/bin/pip install -r requirements.txt
 # Configure
 cp .env.example .env
 chmod 600 .env
-vi .env  # fill in DB_HOST, DB_USER, DB_PASSWORD, VEZA_URL, VEZA_API_KEY
+vi .env  # fill in DB_URL, DB_USER, DB_PASSWORD, JDBC_JAR, VEZA_URL, VEZA_API_KEY
 ```
 
 ### Ubuntu / Debian
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y git python3 python3-pip python3-venv unixodbc unixodbc-dev
+sudo apt-get install -y git python3 python3-pip python3-venv openjdk-11-jre-headless
 
-# Install IBM i Access Client Solutions ODBC driver
-# (download .deb from https://www.ibm.com/support/pages/ibm-i-access-client-solutions)
-sudo dpkg -i ibm-iaccess-*.deb
+# Download JT400 JAR
+sudo mkdir -p /opt/jt400
+sudo curl -fsSL -o /opt/jt400/jt400.jar \
+    https://repo1.maven.org/maven2/net/sf/jt400/jt400/20.0.7/jt400-20.0.7.jar
 
 git clone https://github.com/<your-github-org>/Board-Sales-Invoicing.git
 cd Board-Sales-Invoicing/integrations/board-sales-invoicing
@@ -155,34 +157,31 @@ nano .env
 | Argument | Required | Values | Default | Description |
 |---|---|---|---|---|
 | `--env-file` | No | Path | `.env` | Path to credentials file |
-| `--db-host` | No | Hostname | `DB_HOST` env var | IBM i hostname |
+| `--db-url` | No | JDBC URL | `DB_URL` env var | IBM i JDBC URL |
 | `--db-user` | No | String | `DB_USER` | IBM i user profile |
 | `--db-password` | No | String | `DB_PASSWORD` | IBM i password |
-| `--db-dsn` | No | DSN name | `DB_DSN` | ODBC DSN (overrides host) |
+| `--jdbc-jar` | No | Path | `JDBC_JAR` | Absolute path to jt400.jar |
 | `--veza-url` | No* | URL | `VEZA_URL` | Veza tenant URL |
 | `--veza-api-key` | No* | String | `VEZA_API_KEY` | Veza API key |
 | `--provider-name` | No | String | `Board Sales Invoicing` | Provider label in Veza |
 | `--datasource-name` | No | String | `board-sales-invoicing` | Datasource label in Veza |
-| `--dry-run` | No | Flag | Off | Build payload without pushing |
 | `--save-json` | No | Flag | Off | Save OAA payload JSON to disk |
 | `--log-level` | No | DEBUG/INFO/WARNING/ERROR | `INFO` | Logging verbosity |
 
-*Required unless `--dry-run` is used.
+*Required unless `VEZA_URL`/`VEZA_API_KEY` are set in the environment.
 
 ### Examples
 
 ```bash
-# Dry-run — build and save payload, no Veza push
-python3 board-sales-invoicing.py --env-file .env --dry-run --save-json
-
-# Full push to Veza
+# Push to Veza using .env credentials
 python3 board-sales-invoicing.py --env-file .env
 
-# Override host and credentials inline
-python3 board-sales-invoicing.py \
-    --db-host your-ibmi-host \\
+# Override credentials inline
+python3 board-sales-invoicing.py \\
+    --db-url "jdbc:as400://your-ibmi-host/PDMSTRDBLB;naming=sql" \\
     --db-user MYUSER \\
     --db-password "S3cr3t!" \\
+    --jdbc-jar /opt/jt400/jt400.jar \\
     --veza-url https://your-company.veza.com \\
     --veza-api-key "vza_..." \
     --save-json
@@ -271,17 +270,18 @@ Stagger cron entries by 30 minutes to avoid simultaneous Veza pushes.
 
 | Symptom | Likely Cause | Fix |
 |---|---|---|
-| `pyodbc.Error: Data source name not found` | ODBC driver not registered | Verify IBM i Access Client Solutions is installed; check `/etc/odbcinst.ini` |
-| `Communication link failure` | Network blocked | Confirm TCP 449 and 8471 to the IBM i host are open |
+| `ClassNotFoundException: com.ibm.as400.access.AS400JDBCDriver` | `JDBC_JAR` points to wrong file or doesn't exist | Verify `JDBC_JAR` path; confirm jt400.jar was downloaded correctly |
+| `Connection refused` / `Communication link failure` | Network blocked | Confirm TCP 449 and 8471 to the IBM i host are open |
 | `HY000: User not authorized to library PDMSTRDBLB` | Missing IBM i authority | Grant `*USE` on `PDMSTRDBLB` to the connecting user profile |
 | `OAAClientError: 401` | Invalid Veza API key | Regenerate key in Veza Settings → API Keys |
-| `ModuleNotFoundError: pyodbc` | venv not activated / deps not installed | `venv/bin/pip install -r requirements.txt` |
+| `ModuleNotFoundError: jaydebeapi` | venv not activated / deps not installed | `venv/bin/pip install -r requirements.txt` |
+| `JVMNotFoundException` | Java not installed | Install JRE 8+: `sudo dnf install java-11-openjdk-headless` |
 | `No account rows returned` | IBM i user has no active employees visible | Check `emp.em_status = 'A'` rows exist and user has authority |
 | Empty `SUBMENU` resources | `mnutext` values are NULL or blank | Review `pdmstrdblb.apsubmn` data; contact IBM i administrator |
 
 **Enable debug logging:**
 ```bash
-python3 board-sales-invoicing.py --env-file .env --dry-run --save-json --log-level DEBUG
+python3 board-sales-invoicing.py --env-file .env --save-json --log-level DEBUG
 ```
 
 ---

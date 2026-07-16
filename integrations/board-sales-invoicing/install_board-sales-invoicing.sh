@@ -6,7 +6,9 @@
 # Usage:
 #   bash install_board-sales-invoicing.sh
 #   bash install_board-sales-invoicing.sh --non-interactive
-#   VEZA_URL=https://your-company.veza.com VEZA_API_KEY=tok DB_USER=u DB_PASSWORD=p \
+#   VEZA_URL=https://your-company.veza.com VEZA_API_KEY=tok \
+#       DB_URL=jdbc:as400://host/PDMSTRDBLB DB_USER=u DB_PASSWORD=p \
+#       JDBC_JAR=/opt/jt400/jt400.jar \
 #       bash install_board-sales-invoicing.sh --non-interactive
 #
 # Flags:
@@ -24,7 +26,8 @@ set -uo pipefail
 INSTALL_DIR="/opt/VEZA/board-sales-invoicing-veza"
 SCRIPTS_DIR="${INSTALL_DIR}/scripts"
 LOGS_DIR="${INSTALL_DIR}/logs"
-REPO_URL="${REPO_URL:-https://github.com/your-org/Board-Sales-Invoicing.git}"
+JT400_DIR="/opt/jt400"
+REPO_URL="${REPO_URL:-}"
 BRANCH="${BRANCH:-main}"
 INTEGRATION_SUBDIR="integrations/board-sales-invoicing"
 NON_INTERACTIVE=false
@@ -124,19 +127,48 @@ fi
 milestone "System prerequisites verified"
 
 # ---------------------------------------------------------------------------
-# IBM i Access ODBC driver notice
+# Java runtime check (≥ 8)
 # ---------------------------------------------------------------------------
-info "Checking for IBM i Access ODBC driver …"
-if command -v odbcinst &>/dev/null; then
-    if odbcinst -q -d 2>/dev/null | grep -qi "ibm i access"; then
-        ok "IBM i Access ODBC driver detected"
+milestone "Checking Java runtime …"
+if ! command -v java &>/dev/null; then
+    warn "Java not found — attempting to install OpenJDK 11 …"
+    case "${PKG_MGR}" in
+        dnf|yum) _install_pkg java-11-openjdk-headless ;;
+        apt-get) _install_pkg openjdk-11-jre-headless ;;
+        *) die "Java is required but could not be installed automatically. Install JRE 8+ and re-run." ;;
+    esac
+fi
+JAVA_VER=$(java -version 2>&1 | awk -F '"' '/version/ {print $2}')
+info "Java version: ${JAVA_VER}"
+milestone "Java runtime verified — ${JAVA_VER}"
+
+# ---------------------------------------------------------------------------
+# JT400 JAR (IBM Toolbox for Java)
+# ---------------------------------------------------------------------------
+milestone "Checking for JT400 JAR …"
+JT400_JAR="${JT400_DIR}/jt400.jar"
+if [[ ! -f "${JT400_JAR}" ]]; then
+    info "JT400 JAR not found at ${JT400_JAR} — downloading from Maven Central …"
+    mkdir -p "${JT400_DIR}"
+    JT400_VERSION="20.0.7"
+    JT400_URL="https://repo1.maven.org/maven2/net/sf/jt400/jt400/${JT400_VERSION}/jt400-${JT400_VERSION}.jar"
+    if curl -fsSL -o "${JT400_JAR}" "${JT400_URL}"; then
+        ok "JT400 JAR downloaded to ${JT400_JAR}"
     else
-        warn "IBM i Access ODBC driver NOT found in odbcinst — install IBM i Access Client Solutions before running the connector"
-        warn "Download: https://www.ibm.com/support/pages/ibm-i-access-client-solutions"
+        warn "Automatic download failed. Download jt400.jar manually from:"
+        warn "  https://repo1.maven.org/maven2/net/sf/jt400/jt400/"
+        warn "  or https://sourceforge.net/projects/jt400/files/"
+        warn "Then copy it to ${JT400_JAR} before running the connector."
     fi
 else
-    warn "odbcinst not available — cannot verify IBM i ODBC driver; install unixODBC and IBM i Access Client Solutions"
+    ok "JT400 JAR already present: ${JT400_JAR}"
 fi
+milestone "JT400 JAR check complete"
+
+# ---------------------------------------------------------------------------
+# IBM i Access ODBC driver notice (informational only — JDBC is used instead)
+# ---------------------------------------------------------------------------
+info "Note: this connector uses JDBC (jaydebeapi + jt400.jar) — ODBC drivers are NOT required."
 milestone "IBM i ODBC driver check complete"
 
 # ---------------------------------------------------------------------------
@@ -162,10 +194,11 @@ milestone "Install directories created: ${SCRIPTS_DIR}"
 # ---------------------------------------------------------------------------
 # Repository URL (prompt in interactive mode if not supplied via --repo-url)
 # ---------------------------------------------------------------------------
-if [[ "${NON_INTERACTIVE}" == "false" ]] && [[ "${REPO_URL}" == *"your-org"* ]]; then
-    IFS= read -r -p "Git repository URL [${REPO_URL}]: " _repo_input </dev/tty
-    [[ -n "${_repo_input}" ]] && REPO_URL="${_repo_input}"
+if [[ "${NON_INTERACTIVE}" == "false" ]] && [[ -z "${REPO_URL}" ]]; then
+    IFS= read -r -p "Git repository URL: " REPO_URL </dev/tty
+    [[ -z "${REPO_URL}" ]] && die "Repository URL is required"
 fi
+[[ -z "${REPO_URL}" ]] && die "REPO_URL must be set (use --repo-url or the interactive prompt)"
 
 # ---------------------------------------------------------------------------
 # Clone and copy integration files
@@ -220,8 +253,8 @@ if [[ -f "${ENV_FILE}" ]] && [[ "${OVERWRITE_ENV}" == "false" ]]; then
 else
     info "Collecting configuration …"
 
-    DB_HOST_VAL=$(_prompt "DB_HOST" "IBM i hostname (e.g. ibmi.example.com)")
-    [[ -z "${DB_HOST_VAL}" ]] && die "IBM i hostname is required"
+    DB_URL_VAL=$(_prompt "DB_URL" 'IBM i JDBC URL (e.g. jdbc:as400://hostname/PDMSTRDBLB;naming=sql)')
+    [[ -z "${DB_URL_VAL}" ]] && die "DB_URL is required"
 
     DB_USER_VAL=$(_prompt "DB_USER" "IBM i username")
     DB_PASSWORD_VAL=$(_prompt "DB_PASSWORD" "IBM i password" true)
@@ -229,15 +262,25 @@ else
     VEZA_URL_VAL=$(_prompt "VEZA_URL" "Veza tenant URL (e.g. https://your-company.veza.com)")
     VEZA_API_KEY_VAL=$(_prompt "VEZA_API_KEY" "Veza API key" true)
 
+    # Confirm JT400 JAR path
+    JT400_JAR_DEFAULT="${JT400_JAR:-/opt/jt400/jt400.jar}"
+    if [[ "${NON_INTERACTIVE}" == "false" ]]; then
+        IFS= read -r -p "Path to jt400.jar [${JT400_JAR_DEFAULT}]: " _jar_input </dev/tty
+        JDBC_JAR_VAL="${_jar_input:-${JT400_JAR_DEFAULT}}"
+    else
+        JDBC_JAR_VAL="${JDBC_JAR:-${JT400_JAR_DEFAULT}}"
+    fi
+
     cat > "${ENV_FILE}" <<EOF
 # Board Sales Invoicing IBM i → Veza OAA Connector — generated by installer
 # Generated: $(date -u +"%Y-%m-%dT%H:%M:%SZ")
 # Permissions: chmod 600 .env
 
-# IBM i source
-DB_HOST=${DB_HOST_VAL}
+# IBM i JDBC source
+DB_URL=${DB_URL_VAL}
 DB_USER=${DB_USER_VAL}
 DB_PASSWORD=${DB_PASSWORD_VAL}
+JDBC_JAR=${JDBC_JAR_VAL}
 
 # Veza
 VEZA_URL=${VEZA_URL_VAL}
@@ -245,7 +288,7 @@ VEZA_API_KEY=${VEZA_API_KEY_VAL}
 
 # OAA labels (optional)
 # PROVIDER_NAME=Board Sales Invoicing
-# DATASOURCE_NAME=${DB_HOST_VAL}
+# DATASOURCE_NAME=${DB_URL_VAL}
 EOF
     chmod 600 "${ENV_FILE}"
     ok ".env created at ${ENV_FILE} (permissions: 600)"
@@ -269,6 +312,7 @@ echo ""
 echo -e "  Install path : ${SCRIPTS_DIR}"
 echo -e "  Logs         : ${LOGS_DIR}"
 echo -e "  .env         : ${ENV_FILE}"
+echo -e "  JT400 JAR    : ${JT400_JAR:-/opt/jt400/jt400.jar}"
 echo ""
 echo -e "${BOLD}Next steps:${NC}"
 echo -e "  1. Verify .env credentials:"

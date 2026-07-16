@@ -103,22 +103,27 @@ check_system_requirements() {
         print_warning "jq not found (optional) — JSON output will not be pretty-printed"
     fi
 
-    # unixODBC
+    # unixODBC (not required — connector uses JDBC)
     if command -v isql &>/dev/null || command -v odbcinst &>/dev/null; then
-        print_success "unixODBC tools found"
+        print_info "unixODBC tools found (not required for JDBC connector)"
     else
-        print_warning "unixODBC tools not found — install unixODBC (required for pyodbc)"
+        print_info "unixODBC not found (not required — this connector uses JDBC)"
     fi
 
-    # IBM i Access ODBC driver
-    if command -v odbcinst &>/dev/null; then
-        if odbcinst -q -d 2>/dev/null | grep -qi "ibm i access"; then
-            print_success "IBM i Access ODBC driver registered in odbcinst"
-        else
-            print_fail "IBM i Access ODBC driver NOT found — download IBM i Access Client Solutions from https://www.ibm.com/support/pages/ibm-i-access-client-solutions"
-        fi
+    # Java runtime (≥ 8 required for jaydebeapi / JPype1)
+    if command -v java &>/dev/null; then
+        JAVA_VER=$(java -version 2>&1 | awk -F '"' '/version/ {print $2}')
+        print_success "Java found — version ${JAVA_VER}"
     else
-        print_warning "Cannot verify IBM i ODBC driver (odbcinst not available)"
+        print_fail "Java not found — JRE 8+ is required for jaydebeapi/JPype1 (install openjdk-11-jre-headless or java-11-openjdk-headless)"
+    fi
+
+    # JT400 JAR
+    JDBC_JAR_VAL="${JDBC_JAR:-/opt/jt400/jt400.jar}"
+    if [[ -f "${JDBC_JAR_VAL}" ]]; then
+        print_success "JT400 JAR found: ${JDBC_JAR_VAL}"
+    else
+        print_fail "JT400 JAR not found at ${JDBC_JAR_VAL} — download from https://repo1.maven.org/maven2/net/sf/jt400/jt400/"
     fi
 }
 
@@ -145,7 +150,8 @@ check_python_dependencies() {
         case "${pkg_name}" in
             python-dotenv) import_name="dotenv" ;;
             oaaclient)     import_name="oaaclient" ;;
-            pyodbc)        import_name="pyodbc" ;;
+            jaydebeapi)    import_name="jaydebeapi" ;;
+            JPype1)        import_name="jpype" ;;
         esac
 
         version=$(${PYTHON} -c "import ${import_name}; v=getattr(${import_name},'__version__','?'); print(v)" 2>/dev/null || echo "NOT FOUND")
@@ -196,14 +202,14 @@ check_configuration() {
         fi
     }
 
-    _check_var DB_HOST
+    _check_var DB_URL
     _check_var DB_USER
     _check_var DB_PASSWORD true
+    _check_var JDBC_JAR
     _check_var VEZA_URL
     _check_var VEZA_API_KEY true
 
     # Optional
-    [[ -n "${DB_DSN:-}" ]] && print_info "DB_DSN — ${DB_DSN} (optional DSN override)" || print_info "DB_DSN — not set (using DB_HOST)"
     [[ -n "${PROVIDER_NAME:-}" ]] && print_info "PROVIDER_NAME — ${PROVIDER_NAME}" || print_info "PROVIDER_NAME — not set (default: Board Sales Invoicing)"
     [[ -n "${DATASOURCE_NAME:-}" ]] && print_info "DATASOURCE_NAME — ${DATASOURCE_NAME}" || print_info "DATASOURCE_NAME — not set (default: board-sales-invoicing)"
 }
@@ -215,8 +221,10 @@ check_network_connectivity() {
     print_header "4 — Network Connectivity"
     _source_env
 
-    DB_HOST_VAL="${DB_HOST:-}"
-    DB_PORT=8471  # IBM i DRDA / DDM port for ODBC; also check 449 (IBM i host server)
+    # Extract hostname from JDBC URL (jdbc:as400://hostname/...)
+    DB_URL_VAL="${DB_URL:-}"
+    DB_HOST_VAL=$(echo "${DB_URL_VAL}" | sed 's|jdbc:as400://||' | cut -d'/' -f1 | cut -d';' -f1)
+    DB_PORT=8471  # IBM i DRDA / DDM port; also check 449 (IBM i host server)
     VEZA_HOST=$(echo "${VEZA_URL:-}" | sed 's|https\?://||' | cut -d/ -f1)
 
     # TCP to IBM i (port 449 = IBM i host server; 8471 = DRDA)
@@ -252,61 +260,51 @@ check_authentication() {
     print_header "5 — API / Database Authentication"
     _source_env
 
-    DB_HOST_VAL="${DB_HOST:-}"
+    DB_URL_VAL="${DB_URL:-}"
     DB_USER_VAL="${DB_USER:-}"
     DB_PASSWORD_VAL="${DB_PASSWORD:-}"
-    DB_DSN_VAL="${DB_DSN:-}"
+    JDBC_JAR_VAL="${JDBC_JAR:-/opt/jt400/jt400.jar}"
     VEZA_URL_VAL="${VEZA_URL:-}"
     VEZA_API_KEY_VAL="${VEZA_API_KEY:-}"
 
-    # IBM i ODBC connectivity test via Python
-    if [[ -z "${DB_USER_VAL}" ]] || [[ -z "${DB_PASSWORD_VAL}" ]]; then
-        print_warning "IBM i credentials not set — skipping database auth test"
+    # JDBC connectivity test via Python / jaydebeapi
+    if [[ -z "${DB_URL_VAL}" ]] || [[ -z "${DB_USER_VAL}" ]] || [[ -z "${DB_PASSWORD_VAL}" ]]; then
+        print_warning "IBM i credentials not fully set — skipping JDBC auth test"
+    elif [[ ! -f "${JDBC_JAR_VAL}" ]]; then
+        print_warning "JDBC_JAR not found at ${JDBC_JAR_VAL} — skipping JDBC auth test"
     else
-        print_info "Testing IBM i ODBC connection as ${DB_USER_VAL} …"
-        if [[ -n "${DB_DSN_VAL}" ]]; then
-            CONN_ARGS="DSN=${DB_DSN_VAL};UID=${DB_USER_VAL};PWD=<masked>"
-        else
-            CONN_ARGS="DRIVER={IBM i Access ODBC Driver};SYSTEM=${DB_HOST_VAL};UID=${DB_USER_VAL};PWD=<masked>"
-        fi
-        print_info "[DEBUG] Connection target: ${CONN_ARGS}"
+        print_info "Testing JDBC connection to ${DB_URL_VAL} as ${DB_USER_VAL} …"
 
-        PYODBC_RESULT=$(${PYTHON} - <<PYEOF 2>&1
+        JDBC_RESULT=$(${PYTHON} - <<PYEOF 2>&1
 import sys
 try:
-    import pyodbc
+    import jaydebeapi
 except ImportError:
-    print("IMPORT_ERROR: pyodbc not installed")
+    print("IMPORT_ERROR: jaydebeapi not installed")
     sys.exit(1)
 
 try:
-    dsn = "${DB_DSN_VAL}"
-    if dsn:
-        conn_str = f"DSN={dsn};UID=${DB_USER_VAL};PWD=${DB_PASSWORD_VAL}"
-    else:
-        conn_str = (
-            "DRIVER={IBM i Access ODBC Driver};"
-            "SYSTEM=${DB_HOST_VAL};"
-            "UID=${DB_USER_VAL};"
-            "PWD=${DB_PASSWORD_VAL};"
-            "TRANSLATE BINARY=1;NAMING=0;"
-        )
-    conn = pyodbc.connect(conn_str, autocommit=True, timeout=15)
+    conn = jaydebeapi.connect(
+        "com.ibm.as400.access.AS400JDBCDriver",
+        "${DB_URL_VAL}",
+        ["${DB_USER_VAL}", "${DB_PASSWORD_VAL}"],
+        "${JDBC_JAR_VAL}",
+    )
     cursor = conn.cursor()
-    cursor.execute("VALUES CURRENT DATE")
+    cursor.execute("VALUES current date")
     row = cursor.fetchone()
     conn.close()
-    print(f"OK: Current date = {row[0]}")
+    print(f"OK: current date = {row[0]}")
 except Exception as e:
     print(f"FAIL: {e}")
     sys.exit(1)
 PYEOF
         )
 
-        if echo "${PYODBC_RESULT}" | grep -q "^OK:"; then
-            print_success "IBM i ODBC auth — ${PYODBC_RESULT}"
+        if echo "${JDBC_RESULT}" | grep -q "^OK:"; then
+            print_success "IBM i JDBC auth — ${JDBC_RESULT}"
         else
-            print_fail "IBM i ODBC auth failed: ${PYODBC_RESULT}"
+            print_fail "IBM i JDBC auth failed: ${JDBC_RESULT}"
         fi
     fi
 
@@ -408,7 +406,7 @@ check_deployment_structure() {
     # Validate --help runs cleanly
     if [[ -f "${MAIN_SCRIPT}" ]] && [[ -x "${PYTHON}" ]]; then
         HELP_OUT=$(${PYTHON} "${MAIN_SCRIPT}" --help 2>&1)
-        if echo "${HELP_OUT}" | grep -q "dry-run"; then
+        if echo "${HELP_OUT}" | grep -q "db-url"; then
             print_success "python3 board-sales-invoicing.py --help runs cleanly"
         else
             print_fail "python3 board-sales-invoicing.py --help did not return expected output"
@@ -432,9 +430,9 @@ print_summary() {
     if [[ "${TESTS_FAILED}" -eq 0 ]]; then
         echo -e "${GREEN}All checks passed!${NC}"
         echo ""
-        echo "Recommended dry-run command:"
+        echo "Run the connector:"
         echo "  cd ${SCRIPT_DIR}"
-        echo "  ${PYTHON} board-sales-invoicing.py --env-file .env --dry-run --save-json"
+        echo "  ${PYTHON} board-sales-invoicing.py --env-file .env"
         return 0
     else
         echo -e "${RED}✗ Some checks failed. Please address the issues above before deployment.${NC}"
@@ -448,10 +446,10 @@ print_summary() {
 display_config() {
     print_header "Current Configuration"
     _source_env
-    echo "  DB_HOST       : ${DB_HOST:-NOT SET}"
+    echo "  DB_URL        : ${DB_URL:-NOT SET}"
     echo "  DB_USER       : ${DB_USER:-NOT SET}"
     echo "  DB_PASSWORD   : $(_mask "${DB_PASSWORD:-}")"
-    echo "  DB_DSN        : ${DB_DSN:-not set}"
+    echo "  JDBC_JAR      : ${JDBC_JAR:-NOT SET}"
     echo "  VEZA_URL      : ${VEZA_URL:-NOT SET}"
     echo "  VEZA_API_KEY  : $(_mask "${VEZA_API_KEY:-}")"
     echo "  PROVIDER_NAME : ${PROVIDER_NAME:-Board Sales Invoicing (default)}"
@@ -465,9 +463,10 @@ generate_env_template() {
     else
         cp "${SCRIPT_DIR}/.env.example" "${ENV_FILE}" 2>/dev/null || \
             cat > "${ENV_FILE}" <<'ENVEOF'
-DB_HOST=your_ibmi_hostname
+DB_URL=jdbc:as400://your-ibmi-host/PDMSTRDBLB;naming=sql;date format=iso
 DB_USER=your_ibmi_user
 DB_PASSWORD=your_ibmi_password
+JDBC_JAR=/opt/jt400/jt400.jar
 VEZA_URL=https://your-company.veza.com
 VEZA_API_KEY=your_veza_api_key_here
 ENVEOF
