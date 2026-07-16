@@ -8,10 +8,10 @@ menu-permission data into Veza's Access Graph using the OAA
 CustomApplication template.
 
 Entity model:
-  Local User           → active employees from pdmstrdblb.asem (User_ID, User_Name, User_EIN)
-  Local Role           → System/Role codes from pdmstrdblb.asem (EM_ROLE / System_ID)
-  Application Resource → Menu/Submenu entries (SUBMENU descriptions)
-  Custom Permission    → view, update
+  Local User           -> active employees from pdmstrdblb.asem
+  Local Role           -> System/Role codes (EM_ROLE / System_ID)
+  Application Resource -> Menu/Submenu entries (SUBMENU descriptions)
+  Custom Permission    -> view, update
 """
 
 import argparse
@@ -29,39 +29,35 @@ from oaaclient.client import OAAClient, OAAClientError
 from oaaclient.templates import CustomApplication, OAAPermission
 
 # ---------------------------------------------------------------------------
-# Logging
+# Constants
 # ---------------------------------------------------------------------------
 log = logging.getLogger(__name__)
 
-PROVIDER_NAME_DEFAULT = "Board Sales Invoicing"
+PROVIDER_NAME_DEFAULT  = "Board Sales Invoicing"
 DATASOURCE_NAME_DEFAULT = "board-sales-invoicing"
-JDBC_DRIVER_CLASS = "com.ibm.as400.access.AS400JDBCDriver"
+JDBC_DRIVER_CLASS      = "com.ibm.as400.access.AS400JDBCDriver"
 
+# ---------------------------------------------------------------------------
+# Logging
+# ---------------------------------------------------------------------------
 
 def _setup_logging(log_level: str = "INFO") -> None:
     """Configure file-only logging with hourly rotation to the logs/ folder."""
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    log_dir = os.path.join(script_dir, "logs")
+    log_dir    = os.path.join(script_dir, "logs")
     os.makedirs(log_dir, exist_ok=True)
 
-    timestamp = datetime.now().strftime("%d%m%Y-%H%M")
+    timestamp   = datetime.now().strftime("%d%m%Y-%H%M")
     script_name = os.path.splitext(os.path.basename(__file__))[0]
-    log_file = os.path.join(log_dir, f"{script_name}_{timestamp}.log")
+    log_file    = os.path.join(log_dir, f"{script_name}_{timestamp}.log")
 
     handler = TimedRotatingFileHandler(
-        log_file,
-        when="h",
-        interval=1,
-        backupCount=24,
-        encoding="utf-8",
+        log_file, when="h", interval=1, backupCount=24, encoding="utf-8"
     )
-    handler.setFormatter(
-        logging.Formatter(
-            fmt="%(asctime)s %(levelname)-8s %(message)s",
-            datefmt="%Y-%m-%dT%H:%M:%S",
-        )
-    )
-
+    handler.setFormatter(logging.Formatter(
+        fmt="%(asctime)s %(levelname)-8s %(message)s",
+        datefmt="%Y-%m-%dT%H:%M:%S",
+    ))
     root = logging.getLogger()
     root.setLevel(getattr(logging, log_level.upper(), logging.INFO))
     root.addHandler(handler)
@@ -70,18 +66,18 @@ def _setup_logging(log_level: str = "INFO") -> None:
 # ---------------------------------------------------------------------------
 # Milestone reporting
 # ---------------------------------------------------------------------------
-_RUN_START: float = 0.0
-_MILESTONE_COUNT: int = 0
+_RUN_START:      float = 0.0
+_MILESTONE_COUNT: int  = 0
 
 
 def _milestone(label: str, detail: str = "") -> None:
-    """Print a numbered, timestamped milestone banner to stdout and the log."""
+    """Print a numbered, timestamped milestone to stdout and the log."""
     global _MILESTONE_COUNT
     _MILESTONE_COUNT += 1
-    elapsed = time.perf_counter() - _RUN_START if _RUN_START else 0.0
-    ts = datetime.now().strftime("%H:%M:%S")
+    elapsed    = time.perf_counter() - _RUN_START if _RUN_START else 0.0
+    ts         = datetime.now().strftime("%H:%M:%S")
     detail_str = f"  {detail}" if detail else ""
-    line = f"[{ts}] [{elapsed:6.1f}s] MILESTONE {_MILESTONE_COUNT}: {label}{detail_str}"
+    line       = f"[{ts}] [{elapsed:6.1f}s] MILESTONE {_MILESTONE_COUNT}: {label}{detail_str}"
     print(line)
     log.info("MILESTONE %d: %s%s", _MILESTONE_COUNT, label, detail_str)
 
@@ -91,7 +87,7 @@ def _milestone(label: str, detail: str = "") -> None:
 # ---------------------------------------------------------------------------
 
 def load_config(args) -> dict:
-    """Load configuration from env file, environment variables, and CLI args.
+    """Load and validate configuration.
 
     Precedence: CLI arg > environment variable > .env file value.
     """
@@ -100,34 +96,21 @@ def load_config(args) -> dict:
         load_dotenv(env_path)
         log.info("Loaded environment file: %s", env_path)
     else:
-        log.warning("Environment file not found: %s — relying on environment variables", env_path)
+        log.warning("Environment file not found: %s -- relying on environment variables", env_path)
 
     config = {
-        "veza_url": (args.veza_url or os.getenv("VEZA_URL", "")).rstrip("/"),
-        "veza_api_key": args.veza_api_key or os.getenv("VEZA_API_KEY", ""),
-        "db_url": args.db_url or os.getenv("DB_URL", ""),
-        "db_user": args.db_user or os.getenv("DB_USER", ""),
-        "db_password": args.db_password or os.getenv("DB_PASSWORD", ""),
-        "jdbc_jar": args.jdbc_jar or os.getenv("JDBC_JAR", ""),
-        "provider_name": args.provider_name or os.getenv("PROVIDER_NAME", PROVIDER_NAME_DEFAULT),
-        "datasource_name": args.datasource_name or os.getenv("DATASOURCE_NAME", DATASOURCE_NAME_DEFAULT),
+        "veza_url":        (args.veza_url       or os.getenv("VEZA_URL",        "")).rstrip("/"),
+        "veza_api_key":     args.veza_api_key    or os.getenv("VEZA_API_KEY",    ""),
+        "db_url":           args.db_url          or os.getenv("DB_URL",          ""),
+        "db_user":          args.db_user         or os.getenv("DB_USER",         ""),
+        "db_password":      args.db_password     or os.getenv("DB_PASSWORD",     ""),
+        "jdbc_jar":         args.jdbc_jar        or os.getenv("JDBC_JAR",        ""),
+        "provider_name":    args.provider_name   or os.getenv("PROVIDER_NAME",   PROVIDER_NAME_DEFAULT),
+        "datasource_name":  args.datasource_name or os.getenv("DATASOURCE_NAME", DATASOURCE_NAME_DEFAULT),
     }
 
-    # Validate required fields
-    missing = []
-    if not config["veza_url"]:
-        missing.append("VEZA_URL")
-    if not config["veza_api_key"]:
-        missing.append("VEZA_API_KEY")
-    if not config["db_url"]:
-        missing.append("DB_URL")
-    if not config["db_user"]:
-        missing.append("DB_USER")
-    if not config["db_password"]:
-        missing.append("DB_PASSWORD")
-    if not config["jdbc_jar"]:
-        missing.append("JDBC_JAR")
-
+    required = ("veza_url", "veza_api_key", "db_url", "db_user", "db_password", "jdbc_jar")
+    missing  = [k.upper() for k in required if not config[k]]
     if missing:
         log.error("Missing required configuration: %s", ", ".join(missing))
         sys.exit(1)
@@ -136,37 +119,31 @@ def load_config(args) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Database connection
+# Database connection (JDBC via jaydebeapi)
 # ---------------------------------------------------------------------------
 
 def get_connection(config: dict):
-    """Return an open JDBC connection to the IBM i system via jaydebeapi.
+    """Open and return a JDBC connection to the IBM i system.
 
-    Requires:
-    - DB_URL:      JDBC URL, e.g. jdbc:as400://hostname/PDMSTRDBLB;naming=sql
-    - DB_USER:     IBM i user profile
-    - DB_PASSWORD: IBM i user profile password
-    - JDBC_JAR:    Absolute path to jt400.jar
+    Driver: com.ibm.as400.access.AS400JDBCDriver  (IBM Toolbox for Java)
+    JAR:    path provided via JDBC_JAR / --jdbc-jar
     """
-    db_url = config["db_url"]
-    db_user = config["db_user"]
-    db_password = config["db_password"]
     jdbc_jar = config["jdbc_jar"]
-
     if not os.path.isfile(jdbc_jar):
-        log.error("JDBC JAR not found at path: %s", jdbc_jar)
+        log.error("JDBC JAR not found: %s", jdbc_jar)
         sys.exit(1)
 
-    log.info("Connecting via JDBC: %s as %s", db_url, db_user)
+    log.info("Connecting via JDBC: %s as %s", config["db_url"], config["db_user"])
     try:
         conn = jaydebeapi.connect(
             JDBC_DRIVER_CLASS,
-            db_url,
-            [db_user, db_password],
+            config["db_url"],
+            [config["db_user"], config["db_password"]],
             jdbc_jar,
         )
-        log.info("JDBC connection established successfully")
-        _milestone("Database connection established", f"url={db_url} user={db_user}")
+        log.info("JDBC connection established")
+        _milestone("Database connection established",
+                   f"url={config['db_url']}  user={config['db_user']}")
         return conn
     except Exception as exc:
         log.error("JDBC connection failed: %s", exc)
@@ -177,11 +154,11 @@ def get_connection(config: dict):
 # SQL queries (read-only; no user-supplied values are interpolated)
 # ---------------------------------------------------------------------------
 
-# Connectivity test query.
+# Connectivity test
 TEST_SQL = "VALUES current date"
 
-# Account query — returns all active users with their role and menu permission descriptions.
-ACCOUNT_SQL = """
+# 1. Account query
+ACCOUNT_SQL = """\
 select TRIM(emp.usrid) as User_ID,
        TRIM(emp.em_user_name) as User_Name,
        TRIM(emp.empid) as User_EIN,
@@ -199,14 +176,13 @@ FROM pdmstrdblb.asas sec,
      pdmstrdblb.asem emp
 WHERE sec.MNUPROGRAM = mnu.MNUPGM
   and sec.MNUPROGRAM = sub.MNUPGM
-  and sec.SELECTION = sub.SUBMNU
-  and sec.USRID = emp.USRID
-  and emp.em_status = 'A'
-Order by User_id, User_EIN, System_ID, Description
-"""
+  and sec.SELECTION  = sub.SUBMNU
+  and sec.USRID      = emp.USRID
+  and emp.em_status  = 'A'
+Order by User_id, User_EIN, System_ID, Description"""
 
-# Access query — returns distinct menu/submenu resources.
-GROUP_SQL = """
+# 3. Access (submenu resource) query
+GROUP_SQL = """\
 SELECT distinct
        case
            when sub.mnutext = 'ALL SUBMENUS' and sec.authority = 'Y' and sub.updates = 'Y'
@@ -221,16 +197,14 @@ FROM pdmstrdblb.asas sec,
      pdmstrdblb.asem emp
 WHERE sec.MNUPROGRAM = mnu.MNUPGM
   and sec.MNUPROGRAM = sub.MNUPGM
-  and sec.SELECTION = sub.SUBMNU
-  and sec.USRID = emp.USRID
-  and emp.em_status = 'A'
-"""
+  and sec.SELECTION  = sub.SUBMNU
+  and sec.USRID      = emp.USRID
+  and emp.em_status  = 'A'"""
 
-# System_ID query — returns distinct EM_ROLE / System_ID codes.
-ROLE_SQL = """
+# 4. System_ID (role) query
+ROLE_SQL = """\
 select distinct TRIM(asem.EM_ROLE) as EM_ROLE
-from PDMSTRDBLB.asem AS asem
-"""
+from PDMSTRDBLB.asem AS asem"""
 
 
 # ---------------------------------------------------------------------------
@@ -238,91 +212,81 @@ from PDMSTRDBLB.asem AS asem
 # ---------------------------------------------------------------------------
 
 def fetch_accounts(conn) -> list:
-    """Fetch all active user-permission rows."""
-    print("  → Querying account / permission data …")
-    log.info("Fetching account (user/permission) data …")
-    cursor = conn.cursor()
-    cursor.execute(ACCOUNT_SQL)
-    columns = [col[0].upper() for col in cursor.description]
-    rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
-    cursor.close()
-    log.info("Fetched %d account rows", len(rows))
-    _milestone("Account query complete", f"{len(rows):,} rows returned")
+    """Run the Account query and return all rows as dicts (columns uppercased)."""
+    print("  -> Querying accounts / permissions ...")
+    log.info("Running Account SQL ...")
+    cur  = conn.cursor()
+    cur.execute(ACCOUNT_SQL)
+    cols = [c[0].upper() for c in cur.description]
+    rows = [dict(zip(cols, row)) for row in cur.fetchall()]
+    cur.close()
+    log.info("Account query returned %d rows", len(rows))
+    _milestone("Account query complete", f"{len(rows):,} rows")
     return rows
 
 
 def fetch_submenus(conn) -> list:
-    """Fetch all distinct submenu resource names."""
-    print("  → Querying submenu resources …")
-    log.info("Fetching submenu (resource) data …")
-    cursor = conn.cursor()
-    cursor.execute(GROUP_SQL)
-    submenus = [row[0] for row in cursor.fetchall() if row[0]]
-    cursor.close()
-    log.info("Fetched %d submenu resources", len(submenus))
-    _milestone("Access query complete", f"{len(submenus):,} distinct resources")
-    return submenus
+    """Run the Access query and return distinct SUBMENU values."""
+    print("  -> Querying submenu resources ...")
+    log.info("Running Access SQL ...")
+    cur    = conn.cursor()
+    cur.execute(GROUP_SQL)
+    values = [row[0] for row in cur.fetchall() if row[0]]
+    cur.close()
+    log.info("Access query returned %d distinct submenus", len(values))
+    _milestone("Access query complete", f"{len(values):,} distinct resources")
+    return values
 
 
 def fetch_roles(conn) -> list:
-    """Fetch all distinct System_ID / EM_ROLE values."""
-    print("  → Querying System_ID / EM_ROLE codes …")
-    log.info("Fetching role (System_ID) data …")
-    cursor = conn.cursor()
-    cursor.execute(ROLE_SQL)
-    roles = [row[0] for row in cursor.fetchall() if row[0]]
-    cursor.close()
-    log.info("Fetched %d roles", len(roles))
-    _milestone("System_ID query complete", f"{len(roles):,} distinct roles")
-    return roles
+    """Run the System_ID query and return distinct EM_ROLE values."""
+    print("  -> Querying System_ID / EM_ROLE codes ...")
+    log.info("Running System_ID SQL ...")
+    cur    = conn.cursor()
+    cur.execute(ROLE_SQL)
+    values = [row[0] for row in cur.fetchall() if row[0]]
+    cur.close()
+    log.info("System_ID query returned %d distinct roles", len(values))
+    _milestone("System_ID query complete", f"{len(values):,} distinct roles")
+    return values
 
 
 # ---------------------------------------------------------------------------
 # OAA payload assembly
 # ---------------------------------------------------------------------------
 
-def build_oaa_payload(
-    accounts: list,
-    submenus: list,
-    roles: list,
-    config: dict,
-) -> CustomApplication:
-    """Build the OAA CustomApplication payload from extracted IBM i data.
+def build_payload(accounts: list, submenus: list, roles: list,
+                  config: dict) -> CustomApplication:
+    """Map IBM i data to an OAA CustomApplication payload.
 
-    Entity mapping:
-      pdmstrdblb.asem (active employees)  → Local User
-      pdmstrdblb.asem EM_ROLE / ROLE      → Local Role
-      SUBMENU descriptions                → Application Resource
-      *UPDATE* prefix                     → 'update' Custom Permission
-      All other entries                   → 'view'   Custom Permission
+    Mapping:
+      asem active rows             -> Local User  (User_ID, full_name, employee_id)
+      EM_ROLE / System_ID          -> Local Role
+      SUBMENU descriptions         -> Application Resource  (type: Submenu)
+      Description starts *UPDATE*  -> 'update' permission  (DataRead + DataWrite)
+      All other descriptions       -> 'view'   permission  (DataRead only)
     """
-    provider_name = config["provider_name"]
-    datasource_name = config["datasource_name"]
-
     app = CustomApplication(
-        name=datasource_name,
-        application_type=provider_name,
+        name=config["datasource_name"],
+        application_type=config["provider_name"],
         description="Board Sales Invoicing IBM i menu security and user access",
     )
 
-    # Custom permissions
-    app.add_custom_permission("view", [OAAPermission.DataRead])
+    app.add_custom_permission("view",   [OAAPermission.DataRead])
     app.add_custom_permission("update", [OAAPermission.DataRead, OAAPermission.DataWrite])
 
-    # Add all submenu resources
-    log.info("Adding %d Application Resources (submenus) …", len(submenus))
-    for submenu in submenus:
-        resource = app.add_resource(name=submenu, resource_type="Submenu")
-        log.debug("Resource: %s", submenu)
+    # Application Resources (submenus)
+    log.info("Adding %d Application Resources ...", len(submenus))
+    for name in submenus:
+        app.add_resource(name=name, resource_type="Submenu")
 
-    # Add all roles
-    log.info("Adding %d Local Roles (System IDs) …", len(roles))
-    for role_name in roles:
-        role = app.add_local_role(name=role_name)
-        log.debug("Role: %s", role_name)
-
-    # Build user index: user_id → {name, ein, system_id, permissions[]}
+    # Local Roles (System IDs / EM_ROLE)
+    log.info("Adding %d Local Roles ...", len(roles))
     role_set = set(roles)
+    for name in roles:
+        app.add_local_role(name=name)
+
+    # Local Users — de-duplicate multi-row account results first
     user_index: dict = {}
     for row in accounts:
         uid = (row.get("USER_ID") or "").strip()
@@ -330,49 +294,35 @@ def build_oaa_payload(
             continue
         if uid not in user_index:
             user_index[uid] = {
-                "name": (row.get("USER_NAME") or uid).strip(),
-                "ein": (row.get("USER_EIN") or "").strip(),
+                "name":      (row.get("USER_NAME") or uid).strip(),
+                "ein":       (row.get("USER_EIN")  or "").strip(),
                 "system_id": (row.get("SYSTEM_ID") or "").strip(),
-                "permissions": [],
+                "perms":     [],
             }
         desc = (row.get("DESCRIPTION") or "").strip()
         if desc:
             perm = "update" if desc.startswith("*UPDATE*") else "view"
-            user_index[uid]["permissions"].append((desc, perm))
+            user_index[uid]["perms"].append((desc, perm))
 
-    log.info("Adding %d Local Users …", len(user_index))
+    log.info("Adding %d Local Users ...", len(user_index))
     for uid, info in user_index.items():
-        local_user = app.add_local_user(name=uid)
-        local_user.full_name = info["name"]
-        local_user.add_attribute("employee_id", info["ein"])
-        local_user.add_attribute("system_id", info["system_id"])
+        lu = app.add_local_user(name=uid)
+        lu.full_name = info["name"]
+        lu.add_attribute("employee_id", info["ein"])
+        lu.add_attribute("system_id",   info["system_id"])
 
-        # Associate user → role
-        system_id = info["system_id"]
-        if system_id and system_id in role_set:
-            local_user.add_role(system_id)
-            log.debug("User %s → Role %s", uid, system_id)
+        if info["system_id"] in role_set:
+            lu.add_role(info["system_id"])
+            log.debug("User %s -> Role %s", uid, info["system_id"])
 
-        # Associate user → resource permissions
-        for desc, perm in info["permissions"]:
-            if desc:
-                local_user.add_permission(
-                    permission=perm,
-                    resource_name=desc,
-                    apply_to_application=False,
-                )
-                log.debug("User %s → %s on %s", uid, perm, desc)
+        for desc, perm in info["perms"]:
+            lu.add_permission(permission=perm, resource_name=desc, apply_to_application=False)
+            log.debug("User %s -> %s on %s", uid, perm, desc)
 
-    log.info(
-        "Payload built: %d users, %d roles, %d resources",
-        len(user_index),
-        len(roles),
-        len(submenus),
-    )
-    _milestone(
-        "OAA payload built",
-        f"{len(user_index):,} users  {len(roles):,} roles  {len(submenus):,} resources",
-    )
+    log.info("Payload: %d users  %d roles  %d resources",
+             len(user_index), len(roles), len(submenus))
+    _milestone("OAA payload built",
+               f"{len(user_index):,} users  {len(roles):,} roles  {len(submenus):,} resources")
     return app
 
 
@@ -380,50 +330,38 @@ def build_oaa_payload(
 # Veza push
 # ---------------------------------------------------------------------------
 
-def push_to_veza(
-    config: dict,
-    app: CustomApplication,
-    save_json: bool = False,
-    output_dir: str = ".",
-) -> None:
-    """Push the OAA payload to Veza, optionally saving the JSON for inspection."""
+def push_to_veza(config: dict, app: CustomApplication,
+                 save_json: bool = False, output_dir: str = ".") -> None:
+    """Push the OAA payload to Veza."""
     if save_json:
-        payload_path = os.path.join(
-            output_dir,
-            f"{app.name.replace(' ', '_')}_oaa_payload.json",
-        )
-        with open(payload_path, "w", encoding="utf-8") as fh:
+        path = os.path.join(output_dir,
+                            f"{app.name.replace(' ', '_')}_oaa_payload.json")
+        with open(path, "w", encoding="utf-8") as fh:
             json.dump(app.get_payload(), fh, indent=2, default=str)
-        log.info("Payload saved to: %s", payload_path)
-        _milestone("Payload JSON saved", payload_path)
+        log.info("Payload saved: %s", path)
+        _milestone("Payload JSON saved", path)
 
-    veza_con = OAAClient(url=config["veza_url"], token=config["veza_api_key"])
+    veza_client = OAAClient(url=config["veza_url"], token=config["veza_api_key"])
     try:
-        response = veza_con.push_application(
+        resp = veza_client.push_application(
             provider_name=config["provider_name"],
             data_source_name=config["datasource_name"],
             application_object=app,
             create_provider=True,
         )
-        if response and response.get("warnings"):
-            for w in response["warnings"]:
+        if resp and resp.get("warnings"):
+            for w in resp["warnings"]:
                 log.warning("Veza warning: %s", w)
-        log.info("Successfully pushed to Veza: provider=%s datasource=%s",
+        log.info("Push complete: provider=%s  datasource=%s",
                  config["provider_name"], config["datasource_name"])
-        _milestone(
-            "Veza push complete",
-            f"provider={config['provider_name']}  datasource={config['datasource_name']}",
-        )
+        _milestone("Veza push complete",
+                   f"provider={config['provider_name']}  datasource={config['datasource_name']}")
     except OAAClientError as exc:
-        log.error(
-            "Veza push failed: %s — %s (HTTP %s)",
-            exc.error,
-            exc.message,
-            exc.status_code,
-        )
+        log.error("Veza push failed: %s -- %s (HTTP %s)",
+                  exc.error, exc.message, exc.status_code)
         if hasattr(exc, "details"):
-            for detail in exc.details:
-                log.error("  Detail: %s", detail)
+            for d in exc.details:
+                log.error("  Detail: %s", d)
         sys.exit(1)
 
 
@@ -432,59 +370,47 @@ def push_to_veza(
 # ---------------------------------------------------------------------------
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Board Sales Invoicing IBM i → Veza OAA connector (JDBC)",
+    p = argparse.ArgumentParser(
+        description="Board Sales Invoicing IBM i -> Veza OAA connector (JDBC)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Push to Veza using .env credentials:
   python3 board-sales-invoicing.py --env-file .env
 
-  # Override credentials on the fly:
   python3 board-sales-invoicing.py \\
-      --db-url "jdbc:as400://your-ibmi-host/PDMSTRDBLB" \\
+      --db-url "jdbc:as400://hostname/PDMSTRDBLB;naming=sql" \\
       --db-user MYUSER --db-password SECRET \\
       --jdbc-jar /opt/jt400/jt400.jar \\
-      --veza-url https://your-company.veza.com \\
+      --veza-url https://your-veza-host \\
       --veza-api-key TOKEN
 """,
     )
 
-    # Source connection
-    src = parser.add_argument_group("IBM i / AS400 JDBC source")
-    src.add_argument("--db-url", default=None,
-                     help='JDBC URL for IBM i (env: DB_URL), e.g. "jdbc:as400://hostname/PDMSTRDBLB"')
-    src.add_argument("--db-user", default=None,
-                     help="IBM i user profile (env: DB_USER)")
-    src.add_argument("--db-password", default=None,
-                     help="IBM i user profile password (env: DB_PASSWORD)")
-    src.add_argument("--jdbc-jar", default=None,
-                     help="Absolute path to jt400.jar (env: JDBC_JAR)")
+    db = p.add_argument_group("IBM i / AS400 JDBC source")
+    db.add_argument("--db-url",      default=None,
+                    help='JDBC URL (env: DB_URL), e.g. "jdbc:as400://hostname/PDMSTRDBLB;naming=sql"')
+    db.add_argument("--db-user",     default=None, help="IBM i user profile (env: DB_USER)")
+    db.add_argument("--db-password", default=None, help="IBM i password (env: DB_PASSWORD)")
+    db.add_argument("--jdbc-jar",    default=None, help="Path to jt400.jar (env: JDBC_JAR)")
 
-    # Veza
-    veza = parser.add_argument_group("Veza")
-    veza.add_argument("--veza-url", default=None,
-                      help="Veza tenant URL (env: VEZA_URL)")
-    veza.add_argument("--veza-api-key", default=None,
-                      help="Veza API key (env: VEZA_API_KEY)")
+    vz = p.add_argument_group("Veza")
+    vz.add_argument("--veza-url",     default=None, help="Veza tenant URL (env: VEZA_URL)")
+    vz.add_argument("--veza-api-key", default=None, help="Veza API key (env: VEZA_API_KEY)")
 
-    # OAA metadata
-    meta = parser.add_argument_group("OAA metadata")
-    meta.add_argument("--provider-name", default=None,
+    meta = p.add_argument_group("OAA metadata")
+    meta.add_argument("--provider-name",   default=None,
                       help=f"Provider name in Veza (default: {PROVIDER_NAME_DEFAULT!r})")
     meta.add_argument("--datasource-name", default=None,
                       help=f"Datasource name in Veza (default: {DATASOURCE_NAME_DEFAULT!r})")
 
-    # Behavior
-    parser.add_argument("--env-file", default=".env",
-                        help="Path to .env file (default: .env)")
-    parser.add_argument("--save-json", action="store_true",
-                        help="Save OAA payload as JSON for inspection")
-    parser.add_argument("--log-level", default="INFO",
-                        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
-                        help="Logging verbosity (default: INFO)")
-
-    return parser.parse_args()
+    p.add_argument("--env-file",  default=".env",
+                   help="Path to .env file (default: .env)")
+    p.add_argument("--save-json", action="store_true",
+                   help="Save OAA payload JSON to disk for inspection")
+    p.add_argument("--log-level", default="INFO",
+                   choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+                   help="Logging verbosity (default: INFO)")
+    return p.parse_args()
 
 
 # ---------------------------------------------------------------------------
@@ -493,72 +419,66 @@ Examples:
 
 def main() -> None:
     global _RUN_START, _MILESTONE_COUNT
-    _RUN_START = time.perf_counter()
+    _RUN_START       = time.perf_counter()
     _MILESTONE_COUNT = 0
 
     args = parse_args()
     _setup_logging(args.log_level)
 
-    run_ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     print("=" * 60)
-    print(" Board Sales Invoicing → Veza OAA Connector")
-    print(f" {run_ts}")
+    print(" Board Sales Invoicing -> Veza OAA Connector")
+    print(f" {ts}")
     print(f" save_json={args.save_json}  log_level={args.log_level}")
     print("=" * 60)
+    log.info("Starting connector  save_json=%s  log_level=%s",
+             args.save_json, args.log_level)
 
-    log.info("Starting Board Sales Invoicing → Veza OAA connector")
-    log.info("save_json=%s log_level=%s", args.save_json, args.log_level)
-
-    # MILESTONE 1 — configuration
+    # MILESTONE 1 -- Configuration
     config = load_config(args)
-    _milestone(
-        "Configuration loaded",
-        f"db_url={config['db_url']}  "
-        f"provider={config['provider_name']}  datasource={config['datasource_name']}",
-    )
+    _milestone("Configuration loaded",
+               f"provider={config['provider_name']}  "
+               f"datasource={config['datasource_name']}")
 
-    # MILESTONE 2 — database connection (emitted inside get_connection)
+    # MILESTONE 2 -- Database connection (emitted inside get_connection)
     conn = get_connection(config)
 
-    # MILESTONES 3-5 — data extraction (emitted inside each fetch function)
-    print("\nExtracting data from IBM i …")
+    # MILESTONES 3-5 -- Data extraction
+    print("\nExtracting data from IBM i ...")
     accounts = fetch_accounts(conn)
     submenus = fetch_submenus(conn)
-    roles = fetch_roles(conn)
+    roles    = fetch_roles(conn)
     conn.close()
     log.info("Database connection closed")
 
     if not accounts:
-        log.warning("No account rows returned — check query and credentials")
-        print("[WARN] No account rows returned — check query and credentials")
+        log.warning("No account rows returned -- check query and credentials")
+        print("[WARN] No account rows returned")
 
-    # MILESTONE 6 — payload build (emitted inside build_oaa_payload)
-    print("\nBuilding OAA payload …")
-    app = build_oaa_payload(accounts, submenus, roles, config)
+    # MILESTONE 6 -- Payload assembly
+    print("\nBuilding OAA payload ...")
+    app = build_payload(accounts, submenus, roles, config)
 
-    # MILESTONE 7+ — push / save (emitted inside push_to_veza)
-    print("\nPushing to Veza …")
-    script_dir = os.path.dirname(os.path.abspath(__file__))
+    # MILESTONE 7+ -- Veza push
+    print("\nPushing to Veza ...")
     push_to_veza(
         config=config,
         app=app,
         save_json=args.save_json,
-        output_dir=script_dir,
+        output_dir=os.path.dirname(os.path.abspath(__file__)),
     )
 
-    elapsed = time.perf_counter() - _RUN_START
-    unique_users = len({(r.get("USER_ID") or "").strip() for r in accounts if (r.get("USER_ID") or "").strip()})
-    summary = (
-        f"  Users:     {unique_users:,}\n"
-        f"  Roles:     {len(roles):,}\n"
-        f"  Resources: {len(submenus):,}\n"
-        f"  Elapsed:   {elapsed:.1f}s"
-    )
+    elapsed      = time.perf_counter() - _RUN_START
+    unique_users = len({(r.get("USER_ID") or "").strip() for r in accounts
+                        if (r.get("USER_ID") or "").strip()})
     print("\n" + "=" * 60)
     print(" Run Summary")
-    print(summary)
+    print(f"  Users:     {unique_users:,}")
+    print(f"  Roles:     {len(roles):,}")
+    print(f"  Resources: {len(submenus):,}")
+    print(f"  Elapsed:   {elapsed:.1f}s")
     print("=" * 60)
-    log.info("Connector run complete — elapsed=%.1fs", elapsed)
+    log.info("Connector run complete  elapsed=%.1fs", elapsed)
 
 
 if __name__ == "__main__":

@@ -8,6 +8,6 @@ python-dotenv>=1.0.0
 requests>=2.31.0
 urllib3>=2.0.0
 
-# JDBC bridge for Python (requires Java JRE/JDK 8+ and jt400.jar)
+# JDBC bridge for Python (requires Java JRE/JDK 8+ and jt400.jar on the host)
 jaydebeapi>=1.2.3
 JPype1>=1.4.1
