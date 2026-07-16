@@ -6,7 +6,7 @@
 # Usage:
 #   bash install_board-sales-invoicing.sh
 #   bash install_board-sales-invoicing.sh --non-interactive
-#   VEZA_URL=https://co.veza.com VEZA_API_KEY=tok DB_USER=u DB_PASSWORD=p \
+#   VEZA_URL=https://your-company.veza.com VEZA_API_KEY=tok DB_USER=u DB_PASSWORD=p \
 #       bash install_board-sales-invoicing.sh --non-interactive
 #
 # Flags:
@@ -40,6 +40,14 @@ info()  { echo -e "${BLUE}[INFO]${NC}  $*"; }
 ok()    { echo -e "${GREEN}[OK]${NC}    $*"; }
 warn()  { echo -e "${YELLOW}[WARN]${NC}  $*"; }
 die()   { echo -e "${RED}[ERROR]${NC} $*" >&2; exit 1; }
+
+# Milestone counter — numbered progress steps printed to stdout
+_MS=0
+milestone() {
+    (( _MS++ )) || true
+    local ts; ts=$(date +%H:%M:%S)
+    echo -e "\n${BOLD}[${ts}] ● STEP ${_MS}: $*${NC}"
+}
 
 # ---------------------------------------------------------------------------
 # Argument parsing
@@ -113,6 +121,7 @@ if ! python3 -m venv --help &>/dev/null 2>&1; then
         apt-get) _install_pkg python3-venv ;;
     esac
 fi
+milestone "System prerequisites verified"
 
 # ---------------------------------------------------------------------------
 # IBM i Access ODBC driver notice
@@ -128,6 +137,7 @@ if command -v odbcinst &>/dev/null; then
 else
     warn "odbcinst not available — cannot verify IBM i ODBC driver; install unixODBC and IBM i Access Client Solutions"
 fi
+milestone "IBM i ODBC driver check complete"
 
 # ---------------------------------------------------------------------------
 # Python version check (≥ 3.9)
@@ -140,12 +150,22 @@ if [[ "${PYTHON_MAJOR}" -lt 3 ]] || { [[ "${PYTHON_MAJOR}" -eq 3 ]] && [[ "${PYT
     die "Python 3.9+ required (found ${PYTHON_VERSION})"
 fi
 ok "Python ${PYTHON_VERSION} detected"
+milestone "Python ${PYTHON_VERSION} — version requirement satisfied"
 
 # ---------------------------------------------------------------------------
 # Directory layout
 # ---------------------------------------------------------------------------
 info "Creating install directory: ${INSTALL_DIR}"
 mkdir -p "${SCRIPTS_DIR}" "${LOGS_DIR}"
+milestone "Install directories created: ${SCRIPTS_DIR}"
+
+# ---------------------------------------------------------------------------
+# Repository URL (prompt in interactive mode if not supplied via --repo-url)
+# ---------------------------------------------------------------------------
+if [[ "${NON_INTERACTIVE}" == "false" ]] && [[ "${REPO_URL}" == *"your-org"* ]]; then
+    IFS= read -r -p "Git repository URL [${REPO_URL}]: " _repo_input </dev/tty
+    [[ -n "${_repo_input}" ]] && REPO_URL="${_repo_input}"
+fi
 
 # ---------------------------------------------------------------------------
 # Clone and copy integration files
@@ -165,6 +185,7 @@ cp -f "${tmp_dir}/${INTEGRATION_SUBDIR}"/*.py          "${SCRIPTS_DIR}/" 2>/dev/
 cp -f "${tmp_dir}/${INTEGRATION_SUBDIR}/requirements.txt" "${SCRIPTS_DIR}/"
 cp -f "${tmp_dir}/${INTEGRATION_SUBDIR}/.env.example"   "${SCRIPTS_DIR}/" 2>/dev/null || true
 ok "Integration files installed to ${SCRIPTS_DIR}"
+milestone "Repository cloned — integration files installed to ${SCRIPTS_DIR}"
 
 # ---------------------------------------------------------------------------
 # Python virtual environment
@@ -174,6 +195,7 @@ python3 -m venv "${SCRIPTS_DIR}/venv"
 "${SCRIPTS_DIR}/venv/bin/pip" install --quiet --upgrade pip
 "${SCRIPTS_DIR}/venv/bin/pip" install --quiet -r "${SCRIPTS_DIR}/requirements.txt"
 ok "Python dependencies installed"
+milestone "Python virtual environment ready — all dependencies installed"
 
 # ---------------------------------------------------------------------------
 # Gather credentials
@@ -198,13 +220,13 @@ if [[ -f "${ENV_FILE}" ]] && [[ "${OVERWRITE_ENV}" == "false" ]]; then
 else
     info "Collecting configuration …"
 
-    DB_HOST_VAL=$(_prompt "DB_HOST" "IBM i hostname (e.g. CORP986.westrock.com)")
-    DB_HOST_VAL="${DB_HOST_VAL:-CORP986.westrock.com}"
+    DB_HOST_VAL=$(_prompt "DB_HOST" "IBM i hostname (e.g. ibmi.example.com)")
+    [[ -z "${DB_HOST_VAL}" ]] && die "IBM i hostname is required"
 
     DB_USER_VAL=$(_prompt "DB_USER" "IBM i username")
     DB_PASSWORD_VAL=$(_prompt "DB_PASSWORD" "IBM i password" true)
 
-    VEZA_URL_VAL=$(_prompt "VEZA_URL" "Veza tenant URL (e.g. https://yourco.veza.com)")
+    VEZA_URL_VAL=$(_prompt "VEZA_URL" "Veza tenant URL (e.g. https://your-company.veza.com)")
     VEZA_API_KEY_VAL=$(_prompt "VEZA_API_KEY" "Veza API key" true)
 
     cat > "${ENV_FILE}" <<EOF
@@ -223,10 +245,11 @@ VEZA_API_KEY=${VEZA_API_KEY_VAL}
 
 # OAA labels (optional)
 # PROVIDER_NAME=Board Sales Invoicing
-# DATASOURCE_NAME=CORP986
+# DATASOURCE_NAME=${DB_HOST_VAL}
 EOF
     chmod 600 "${ENV_FILE}"
     ok ".env created at ${ENV_FILE} (permissions: 600)"
+    milestone "Credentials saved — .env written to ${ENV_FILE}"
 fi
 
 # ---------------------------------------------------------------------------
@@ -251,13 +274,10 @@ echo -e "${BOLD}Next steps:${NC}"
 echo -e "  1. Verify .env credentials:"
 echo -e "     cat ${ENV_FILE}"
 echo ""
-echo -e "  2. Run a dry-run (no Veza push):"
+echo -e "  2. Push to Veza:"
 echo -e "     cd ${SCRIPTS_DIR}"
-echo -e "     ./venv/bin/python3 board-sales-invoicing.py --env-file .env --dry-run --save-json"
-echo ""
-echo -e "  3. Full push to Veza:"
 echo -e "     ./venv/bin/python3 board-sales-invoicing.py --env-file .env"
 echo ""
-echo -e "  4. Schedule via cron (run daily at 2 AM):"
+echo -e "  3. Schedule via cron (run daily at 2 AM):"
 echo -e "     echo '0 2 * * * $(whoami) cd ${SCRIPTS_DIR} && ./venv/bin/python3 board-sales-invoicing.py --env-file .env >> ${LOGS_DIR}/cron.log 2>&1' | sudo tee /etc/cron.d/board-sales-invoicing"
 echo ""

@@ -2,7 +2,7 @@
 """
 Board Sales Invoicing (IBM i / AS400) to Veza OAA Integration Script
 
-Connects to the IBM i system at CORP986.westrock.com via pyodbc (IBM i Access
+Connects to the IBM i system configured via DB_HOST via pyodbc (IBM i Access
 Client Solutions ODBC driver) and pushes user, role, and menu-permission data
 into Veza's Access Graph using the OAA CustomApplication template.
 
@@ -34,7 +34,7 @@ from oaaclient.templates import CustomApplication, OAAPermission
 log = logging.getLogger(__name__)
 
 PROVIDER_NAME_DEFAULT = "Board Sales Invoicing"
-DATASOURCE_NAME_DEFAULT = "CORP986"
+DATASOURCE_NAME_DEFAULT = "board-sales-invoicing"
 
 
 def _setup_logging(log_level: str = "INFO") -> None:
@@ -104,7 +104,7 @@ def load_config(args) -> dict:
     config = {
         "veza_url": (args.veza_url or os.getenv("VEZA_URL", "")).rstrip("/"),
         "veza_api_key": args.veza_api_key or os.getenv("VEZA_API_KEY", ""),
-        "db_host": args.db_host or os.getenv("DB_HOST", "CORP986.westrock.com"),
+        "db_host": args.db_host or os.getenv("DB_HOST", ""),
         "db_user": args.db_user or os.getenv("DB_USER", ""),
         "db_password": args.db_password or os.getenv("DB_PASSWORD", ""),
         "db_dsn": args.db_dsn or os.getenv("DB_DSN", ""),
@@ -435,8 +435,8 @@ Examples:
   python3 board-sales-invoicing.py --env-file .env
 
   # Override credentials on the fly:
-  python3 board-sales-invoicing.py --db-host CORP986.westrock.com \\
-      --db-user MYUSER --db-password SECRET --veza-url https://myco.veza.com \\
+  python3 board-sales-invoicing.py --db-host your-ibmi-host \\
+      --db-user MYUSER --db-password SECRET --veza-url https://your-company.veza.com \\
       --veza-api-key TOKEN
 """,
     )
@@ -444,7 +444,7 @@ Examples:
     # Source connection
     src = parser.add_argument_group("IBM i / AS400 source")
     src.add_argument("--db-host", default=None,
-                     help="IBM i hostname or IP (env: DB_HOST, default: CORP986.westrock.com)")
+                     help="IBM i hostname or IP (env: DB_HOST)")
     src.add_argument("--db-user", default=None,
                      help="IBM i ODBC username (env: DB_USER)")
     src.add_argument("--db-password", default=None,
@@ -455,7 +455,7 @@ Examples:
     # Veza
     veza = parser.add_argument_group("Veza")
     veza.add_argument("--veza-url", default=None,
-                      help="Veza tenant URL, e.g. https://myco.veza.com (env: VEZA_URL)")
+                      help="Veza tenant URL, e.g. https://your-company.veza.com (env: VEZA_URL)")
     veza.add_argument("--veza-api-key", default=None,
                       help="Veza API key (env: VEZA_API_KEY)")
 

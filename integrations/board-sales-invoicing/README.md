@@ -1,6 +1,6 @@
 # Board Sales Invoicing IBM i → Veza OAA Connector
 
-Connects to the IBM i system at `CORP986.westrock.com` via pyodbc (IBM i Access Client Solutions ODBC driver) and pushes user, role, and menu-permission data into Veza's Access Graph using the OAA CustomApplication template.
+Connects to the IBM i system configured via `DB_HOST` via pyodbc (IBM i Access Client Solutions ODBC driver) and pushes user, role, and menu-permission data into Veza's Access Graph using the OAA CustomApplication template.
 
 ---
 
@@ -29,7 +29,7 @@ This connector queries three views of the `pdmstrdblb` schema on the IBM i host 
 
 ```mermaid
 graph LR
-    subgraph IBMi["📊 IBM i CORP986 — pdmstrdblb"]
+    subgraph IBMi["📊 IBM i <your-ibmi-host> — pdmstrdblb"]
         ASEM["pdmstrdblb.asem\nEmployee Master\n(User_ID, User_Name, EIN, ROLE)"]
         ASAS["pdmstrdblb.asas\nSecurity Matrix\n(USRID, MNUPROGRAM, SELECTION, authority)"]
         APMENUS["pdmstrdblb.apmenus\nMenu Definitions\n(MNUPGM, MNUTEXT)"]
@@ -59,7 +59,7 @@ graph LR
 ## 3. How It Works
 
 1. Reads credentials from `.env` (or CLI args / environment variables).
-2. Opens a pyodbc connection to `CORP986.westrock.com` using the IBM i Access ODBC driver.
+2. Opens a pyodbc connection to the configured IBM i host (`DB_HOST`) using the IBM i Access ODBC driver.
 3. Runs the **Account Query** — returns all active employees with their role assignments and the menu/submenu entries they can access.
 4. Runs the **Group Query** — returns the distinct set of menu/submenu resource names.
 5. Runs the **Role Query** — returns the distinct set of `EM_ROLE` / System_ID codes.
@@ -80,7 +80,7 @@ graph LR
 | Python 3.9+ | `python3 --version` |
 | unixODBC | `sudo dnf install unixODBC unixODBC-devel` |
 | IBM i Access Client Solutions ODBC driver | Download from [IBM Support](https://www.ibm.com/support/pages/ibm-i-access-client-solutions); install and register in `/etc/odbc.ini` |
-| Network access to `CORP986.westrock.com` | TCP ports 449 and 8471 must be reachable |
+| Network access to your IBM i host | TCP ports 449 and 8471 must be reachable |
 | IBM i user profile | Must have `*USE` authority to `pdmstrdblb` library |
 | Veza tenant + API key | Generated in Veza Settings → API Keys |
 
@@ -91,7 +91,7 @@ graph LR
 Once the repository is available, run the one-command installer:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/your-org/Board-Sales-Invoicing/main/integrations/board-sales-invoicing/install_board-sales-invoicing.sh | bash
+curl -fsSL https://raw.githubusercontent.com/<your-github-org>/Board-Sales-Invoicing/main/integrations/board-sales-invoicing/install_board-sales-invoicing.sh | bash
 ```
 
 The installer will:
@@ -115,7 +115,7 @@ sudo dnf install -y git python3 python3-pip unixODBC unixODBC-devel
 sudo rpm -ivh ibm-iaccess-*.rpm
 
 # Clone and set up
-git clone https://github.com/your-org/Board-Sales-Invoicing.git
+git clone https://github.com/<your-github-org>/Board-Sales-Invoicing.git
 cd Board-Sales-Invoicing/integrations/board-sales-invoicing
 python3 -m venv venv
 venv/bin/pip install -r requirements.txt
@@ -136,7 +136,7 @@ sudo apt-get install -y git python3 python3-pip python3-venv unixodbc unixodbc-d
 # (download .deb from https://www.ibm.com/support/pages/ibm-i-access-client-solutions)
 sudo dpkg -i ibm-iaccess-*.deb
 
-git clone https://github.com/your-org/Board-Sales-Invoicing.git
+git clone https://github.com/<your-github-org>/Board-Sales-Invoicing.git
 cd Board-Sales-Invoicing/integrations/board-sales-invoicing
 python3 -m venv venv
 venv/bin/pip install -r requirements.txt
@@ -155,14 +155,14 @@ nano .env
 | Argument | Required | Values | Default | Description |
 |---|---|---|---|---|
 | `--env-file` | No | Path | `.env` | Path to credentials file |
-| `--db-host` | No | Hostname | `CORP986.westrock.com` (or `DB_HOST`) | IBM i hostname |
+| `--db-host` | No | Hostname | `DB_HOST` env var | IBM i hostname |
 | `--db-user` | No | String | `DB_USER` | IBM i user profile |
 | `--db-password` | No | String | `DB_PASSWORD` | IBM i password |
 | `--db-dsn` | No | DSN name | `DB_DSN` | ODBC DSN (overrides host) |
 | `--veza-url` | No* | URL | `VEZA_URL` | Veza tenant URL |
 | `--veza-api-key` | No* | String | `VEZA_API_KEY` | Veza API key |
 | `--provider-name` | No | String | `Board Sales Invoicing` | Provider label in Veza |
-| `--datasource-name` | No | String | `CORP986` | Datasource label in Veza |
+| `--datasource-name` | No | String | `board-sales-invoicing` | Datasource label in Veza |
 | `--dry-run` | No | Flag | Off | Build payload without pushing |
 | `--save-json` | No | Flag | Off | Save OAA payload JSON to disk |
 | `--log-level` | No | DEBUG/INFO/WARNING/ERROR | `INFO` | Logging verbosity |
@@ -180,10 +180,10 @@ python3 board-sales-invoicing.py --env-file .env
 
 # Override host and credentials inline
 python3 board-sales-invoicing.py \
-    --db-host CORP986.westrock.com \
-    --db-user MYUSER \
-    --db-password "S3cr3t!" \
-    --veza-url https://myco.veza.com \
+    --db-host your-ibmi-host \\
+    --db-user MYUSER \\
+    --db-password "S3cr3t!" \\
+    --veza-url https://your-company.veza.com \\
     --veza-api-key "vza_..." \
     --save-json
 
@@ -245,11 +245,11 @@ PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
 To run against multiple IBM i environments, use separate `.env` files and the `--env-file` flag:
 
 ```bash
-# Production (CORP986)
-python3 board-sales-invoicing.py --env-file .env.prod --datasource-name CORP986
+# Production
+python3 board-sales-invoicing.py --env-file .env.prod --datasource-name ibmi-prod
 
 # QA / staging
-python3 board-sales-invoicing.py --env-file .env.qa --datasource-name CORP986-QA
+python3 board-sales-invoicing.py --env-file .env.qa --datasource-name ibmi-qa
 ```
 
 Stagger cron entries by 30 minutes to avoid simultaneous Veza pushes.
@@ -263,7 +263,7 @@ Stagger cron entries by 30 minutes to avoid simultaneous Veza pushes.
 - **IBM i user profile**: grant only `*USE` authority to `pdmstrdblb` — no DDL or DML rights needed beyond `SELECT`.
 - **Veza API key**: rotate periodically in Veza Settings → API Keys; update `.env` after rotation.
 - **SELinux / AppArmor**: run `restorecon` after installing on RHEL; review AppArmor policy on Ubuntu if the connector cannot read `/etc/odbc.ini`.
-- **Network**: restrict outbound access to `CORP986.westrock.com:449,8471` and `your-company.veza.com:443`.
+- **Network**: restrict outbound access to `<your-ibmi-host>:449,8471` and `<your-veza-url>:443`.
 
 ---
 
@@ -272,7 +272,7 @@ Stagger cron entries by 30 minutes to avoid simultaneous Veza pushes.
 | Symptom | Likely Cause | Fix |
 |---|---|---|
 | `pyodbc.Error: Data source name not found` | ODBC driver not registered | Verify IBM i Access Client Solutions is installed; check `/etc/odbcinst.ini` |
-| `Communication link failure` | Network blocked | Confirm TCP 449 and 8471 to CORP986 are open |
+| `Communication link failure` | Network blocked | Confirm TCP 449 and 8471 to the IBM i host are open |
 | `HY000: User not authorized to library PDMSTRDBLB` | Missing IBM i authority | Grant `*USE` on `PDMSTRDBLB` to the connecting user profile |
 | `OAAClientError: 401` | Invalid Veza API key | Regenerate key in Veza Settings → API Keys |
 | `ModuleNotFoundError: pyodbc` | venv not activated / deps not installed | `venv/bin/pip install -r requirements.txt` |

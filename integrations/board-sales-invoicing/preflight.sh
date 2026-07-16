@@ -205,7 +205,7 @@ check_configuration() {
     # Optional
     [[ -n "${DB_DSN:-}" ]] && print_info "DB_DSN — ${DB_DSN} (optional DSN override)" || print_info "DB_DSN — not set (using DB_HOST)"
     [[ -n "${PROVIDER_NAME:-}" ]] && print_info "PROVIDER_NAME — ${PROVIDER_NAME}" || print_info "PROVIDER_NAME — not set (default: Board Sales Invoicing)"
-    [[ -n "${DATASOURCE_NAME:-}" ]] && print_info "DATASOURCE_NAME — ${DATASOURCE_NAME}" || print_info "DATASOURCE_NAME — not set (default: CORP986)"
+    [[ -n "${DATASOURCE_NAME:-}" ]] && print_info "DATASOURCE_NAME — ${DATASOURCE_NAME}" || print_info "DATASOURCE_NAME — not set (default: board-sales-invoicing)"
 }
 
 # ---------------------------------------------------------------------------
@@ -215,7 +215,7 @@ check_network_connectivity() {
     print_header "4 — Network Connectivity"
     _source_env
 
-    DB_HOST_VAL="${DB_HOST:-CORP986.westrock.com}"
+    DB_HOST_VAL="${DB_HOST:-}"
     DB_PORT=8471  # IBM i DRDA / DDM port for ODBC; also check 449 (IBM i host server)
     VEZA_HOST=$(echo "${VEZA_URL:-}" | sed 's|https\?://||' | cut -d/ -f1)
 
@@ -455,7 +455,7 @@ display_config() {
     echo "  VEZA_URL      : ${VEZA_URL:-NOT SET}"
     echo "  VEZA_API_KEY  : $(_mask "${VEZA_API_KEY:-}")"
     echo "  PROVIDER_NAME : ${PROVIDER_NAME:-Board Sales Invoicing (default)}"
-    echo "  DATASOURCE    : ${DATASOURCE_NAME:-CORP986 (default)}"
+    echo "  DATASOURCE    : ${DATASOURCE_NAME:-board-sales-invoicing (default)}"
 }
 
 generate_env_template() {
@@ -465,7 +465,7 @@ generate_env_template() {
     else
         cp "${SCRIPT_DIR}/.env.example" "${ENV_FILE}" 2>/dev/null || \
             cat > "${ENV_FILE}" <<'ENVEOF'
-DB_HOST=CORP986.westrock.com
+DB_HOST=your_ibmi_hostname
 DB_USER=your_ibmi_user
 DB_PASSWORD=your_ibmi_password
 VEZA_URL=https://your-company.veza.com

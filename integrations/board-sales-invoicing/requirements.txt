@@ -1,5 +1,5 @@
 # Core Veza OAA client
-oaaclient>=3.0.0
+oaaclient>=1.1.0
 
 # Environment variable / .env file loading
 python-dotenv>=1.0.0
