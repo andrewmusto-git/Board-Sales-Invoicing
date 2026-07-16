@@ -218,6 +218,14 @@ cp -f "${tmp_dir}/${INTEGRATION_SUBDIR}"/*.py          "${SCRIPTS_DIR}/" 2>/dev/
 cp -f "${tmp_dir}/${INTEGRATION_SUBDIR}/requirements.txt" "${SCRIPTS_DIR}/"
 cp -f "${tmp_dir}/${INTEGRATION_SUBDIR}/.env.example"   "${SCRIPTS_DIR}/" 2>/dev/null || true
 ok "Integration files installed to ${SCRIPTS_DIR}"
+
+# Strip Windows CRLF line endings from all scripts so the Python shebang
+# resolves correctly on Linux regardless of how the repo was cloned.
+info "Normalising line endings (CRLF → LF) …"
+for f in "${SCRIPTS_DIR}"/*.py "${SCRIPTS_DIR}"/*.sh; do
+    [[ -f "${f}" ]] && sed -i 's/\r$//' "${f}"
+done
+ok "Line endings normalised"
 milestone "Repository cloned — integration files installed to ${SCRIPTS_DIR}"
 
 # ---------------------------------------------------------------------------
